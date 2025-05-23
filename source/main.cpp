@@ -36,14 +36,6 @@ static C2D_Sprite titleSprite;
 //static C2D_SpriteSheet numberSheet;
 int tickCount;
 int gameState;
-class uiText{
-	public:
-		C2D_Text text;
-		C2D_TextBuf buf;
-	uiText(char* inputText){
-		C2D_TextParse(&text,buf,inputText);
-	}
-};
 
 float randRange(float l,float u){
 	srand(time(0)+tickCount-sin(tickCount)+tan(tickCount));
@@ -119,7 +111,6 @@ Enemy enemies[ENEMIES_HEIGHT*ENEMIES_WIDTH];
 Ball playerBall = Ball(SCREEN_WIDTH/2,SCREEN_HEIGHT-10,0,3);
 Paddle playerPaddle = Paddle(1);
 C2D_Sprite backgroundSprite;
-uiText titleText = uiText("Hi!");
 
 static void spawnEnemies(){
 	for (int x = 0; x<ENEMIES_WIDTH;x++){
