@@ -31,8 +31,19 @@
 
 static C2D_SpriteSheet spriteSheet;
 static C2D_SpriteSheet backgroundSheet;
+static C2D_Sprite bgEnemy;
+static C2D_Sprite titleSprite;
 //static C2D_SpriteSheet numberSheet;
 int tickCount;
+int gameState;
+class uiText{
+	public:
+		C2D_Text text;
+		C2D_TextBuf buf;
+	uiText(char* inputText){
+		C2D_TextParse(&text,buf,inputText);
+	}
+};
 
 float randRange(float l,float u){
 	srand(time(0)+tickCount-sin(tickCount)+tan(tickCount));
@@ -59,11 +70,13 @@ class Ball{
 		float sx;
 		float sy;
 		C2D_Sprite spr;
+		int timer;
 	Ball(float ix, float iy, float isx, float isy){
 		x = ix;
 		y = iy;
 		sx = isx;
 		sy = isy;
+		timer = -1;
 	}
 };
 
@@ -103,9 +116,10 @@ class Enemy {
 
 };
 Enemy enemies[ENEMIES_HEIGHT*ENEMIES_WIDTH];
-Ball playerBall = Ball(SCREEN_WIDTH/2,SCREEN_HEIGHT/2,0,3);
+Ball playerBall = Ball(SCREEN_WIDTH/2,SCREEN_HEIGHT-10,0,3);
 Paddle playerPaddle = Paddle(1);
 C2D_Sprite backgroundSprite;
+uiText titleText = uiText("Hi!");
 
 static void spawnEnemies(){
 	for (int x = 0; x<ENEMIES_WIDTH;x++){
@@ -220,6 +234,7 @@ static void updatePlayer() {
 int main(int argc, char* argv[]) {
 //---------------------------------------------------------------------------------
 	tickCount = 0;
+	gameState = 0;
 	// Init libs
 	srand(time(0));
 
@@ -238,6 +253,15 @@ int main(int argc, char* argv[]) {
 	if (!spriteSheet) svcBreak(USERBREAK_PANIC);
 	backgroundSheet = C2D_SpriteSheetLoad("romfs:/gfx/backgrounds.t3x");
 	if (!spriteSheet) svcBreak(USERBREAK_PANIC);
+
+	C2D_SpriteFromSheet(&bgEnemy, spriteSheet, 0);
+	C2D_SpriteSetCenter(&bgEnemy, 0.5f, 0.5f);
+	C2D_SpriteSetPos(&bgEnemy, 0, 0);
+	C2D_SpriteSetScale(&bgEnemy, 0.7, 0.7);
+	C2D_SpriteFromSheet(&titleSprite, spriteSheet, 3);
+	C2D_SpriteSetCenter(&titleSprite, 0.5f, 0.5f);
+	C2D_SpriteSetPos(&titleSprite, SCREEN_WIDTH/2, SCREEN_HEIGHT/2-50);
+	C2D_SpriteSetScale(&titleSprite, 1.8, 1.8);
 
 	// Initialize sprites
 	spawnEnemies();
@@ -268,38 +292,57 @@ int main(int argc, char* argv[]) {
 		// Respond to user input
 		u32 kDown = hidKeysDown();
 		u32 kHeld = hidKeysHeld();
-		if (kDown & KEY_START)
-			break; // break in order to return to hbmenu
+		// if (kDown & KEY_START)
+		// 	break; // break in order to return to hbmenu
 
-
-		updateEnemies();
-		updatePlayer();
-		if (kHeld&KEY_DLEFT||kHeld&KEY_CPAD_LEFT){
-			playerPaddle.sx -= playerPaddle.speed;
+		if (gameState == 0){
+			C3D_FrameBegin(C3D_FRAME_SYNCDRAW);
+			C2D_TargetClear(top, C2D_Color32f(0.0f, 0.0f, 0.0f, 1.0f));
+			C2D_SceneBegin(top);
+			for (int x = -1;x<11;x++){
+				for (int y = -1;y<7;y++){
+					C2D_SpriteSetPos(&bgEnemy, x*40+20, y*40+20);
+					C2D_SpriteSetRotation(&bgEnemy, sin((float)tickCount/10+(float)x/2+(float)y/4)*0.1);
+					C2D_ImageTint enemyTint;
+					C2D_PlainImageTint(&enemyTint,C2D_Color32f(0.0,0.0,0.0,1.0),0.5);
+					C2D_DrawSpriteTinted(&bgEnemy,&enemyTint);
+				}
+			}
+			C2D_DrawSprite(&titleSprite);
+			C3D_FrameEnd(0);
+			if (kDown & KEY_START)
+				gameState = 1;
 		}
-		if (kHeld&KEY_DRIGHT||kHeld&KEY_CPAD_RIGHT){
-			playerPaddle.sx += playerPaddle.speed;
+		else if (gameState == 1){
+			updateEnemies();
+			updatePlayer();
+			if (kHeld&KEY_DLEFT||kHeld&KEY_CPAD_LEFT){
+				playerPaddle.sx -= playerPaddle.speed;
+			}
+			if (kHeld&KEY_DRIGHT||kHeld&KEY_CPAD_RIGHT){
+				playerPaddle.sx += playerPaddle.speed;
+			}
+
+			//printf("\x1b[1;1HSprites: %zu/%u\x1b[K", numSprites, MAX_SPRITES);
+			printf("\x1b[2;1HCPU:     %6.2f%%\x1b[K", C3D_GetProcessingTime()*6.0f);
+			printf("\x1b[3;1HGPU:     %6.2f%%\x1b[K", C3D_GetDrawingTime()*6.0f);
+			printf("\x1b[4;1HCmdBuf:  %6.2f%%\x1b[K", C3D_GetCmdBufUsage()*100.0f);
+			printf("\x1b[5;1HSX		  %6.2f%%\x1b[K", playerBall.sx);
+			printf("\x1b[6;1HSY		  %6.2f%%\x1b[K", playerBall.sy);
+			printf("\x1b[8;1HSY		  %6.2f%%\x1b[K", randRange(-0.01,0.01));
+			
+
+			// Render the scene
+			C3D_FrameBegin(C3D_FRAME_SYNCDRAW);
+			C2D_TargetClear(top, C2D_Color32f(0.0f, 0.0f, 0.0f, 1.0f));
+			C2D_SceneBegin(top);
+			C2D_DrawSprite(&backgroundSprite);
+			for (size_t i = 0; i < ENEMIES_COUNT; i ++)
+				C2D_DrawSprite(&enemies[i].spr);
+			C2D_DrawSprite(&playerBall.spr);
+			C2D_DrawSprite(&playerPaddle.spr);
+			C3D_FrameEnd(0);
 		}
-
-		//printf("\x1b[1;1HSprites: %zu/%u\x1b[K", numSprites, MAX_SPRITES);
-		printf("\x1b[2;1HCPU:     %6.2f%%\x1b[K", C3D_GetProcessingTime()*6.0f);
-		printf("\x1b[3;1HGPU:     %6.2f%%\x1b[K", C3D_GetDrawingTime()*6.0f);
-		printf("\x1b[4;1HCmdBuf:  %6.2f%%\x1b[K", C3D_GetCmdBufUsage()*100.0f);
-		printf("\x1b[5;1HSX		  %6.2f%%\x1b[K", playerBall.sx);
-		printf("\x1b[6;1HSY		  %6.2f%%\x1b[K", playerBall.sy);
-		printf("\x1b[8;1HSY		  %6.2f%%\x1b[K", randRange(-0.01,0.01));
-		
-
-		// Render the scene
-		C3D_FrameBegin(C3D_FRAME_SYNCDRAW);
-		C2D_TargetClear(top, C2D_Color32f(0.0f, 0.0f, 0.0f, 1.0f));
-		C2D_SceneBegin(top);
-		C2D_DrawSprite(&backgroundSprite);
-		for (size_t i = 0; i < ENEMIES_COUNT; i ++)
-			C2D_DrawSprite(&enemies[i].spr);
-		C2D_DrawSprite(&playerBall.spr);
-		C2D_DrawSprite(&playerPaddle.spr);
-		C3D_FrameEnd(0);
 	}
 
 	// Delete graphics
