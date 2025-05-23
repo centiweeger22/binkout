@@ -8,14 +8,17 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
+#include <3ds.h>
 #include <random>
 
 #define MAX_SPRITES   768
 #define ENEMIES_WIDTH 9
 #define ENEMIES_HEIGHT 3
 #define ENEMIES_COUNT ENEMIES_WIDTH*ENEMIES_HEIGHT
-#define SCREEN_WIDTH  400
-#define SCREEN_HEIGHT 240
+#define SCREEN_WIDTH_TOP  400
+#define SCREEN_HEIGHT_TOP 240
+#define SCREEN_WIDTH_BOTTOM  320
+#define SCREEN_HEIGHT_BOTTOM 240
 #define ENEMY_WIDTH 0.625
 #define ENEMY_HEIGHT 0.625
 #define ROTATION_FACTOR 0.02
@@ -33,12 +36,16 @@ static C2D_SpriteSheet spriteSheet;
 static C2D_SpriteSheet backgroundSheet;
 static C2D_Sprite bgEnemy;
 static C2D_Sprite titleSprite;
+int levelNo;
+C2D_TextBuf g_staticBuf;
+C2D_Text g_staticText[10];
+C2D_Font gameFont;
 //static C2D_SpriteSheet numberSheet;
 int tickCount;
 int gameState;
 
 float randRange(float l,float u){
-	srand(time(0)+tickCount-sin(tickCount)+tan(tickCount));
+	srand(time(0)+tickCount-sin((float)tickCount)+tan((float)tickCount));
 	float n = ((float)(rand()%32767))/(32767.0);
 	n*= (u-l);
 	n += l;
@@ -81,8 +88,8 @@ class Paddle{
 	float speed;
 	C2D_Sprite spr;
 	Paddle(float iSpeed){
-		x = SCREEN_WIDTH/2;
-		y = SCREEN_HEIGHT-20;
+		x = SCREEN_WIDTH_TOP/2;
+		y = SCREEN_HEIGHT_TOP-20;
 		speed = iSpeed;
 	}
 };
@@ -108,7 +115,7 @@ class Enemy {
 
 };
 Enemy enemies[ENEMIES_HEIGHT*ENEMIES_WIDTH];
-Ball playerBall = Ball(SCREEN_WIDTH/2,SCREEN_HEIGHT-10,0,3);
+Ball playerBall = Ball(SCREEN_WIDTH_TOP/2,SCREEN_HEIGHT_TOP-10,0,3);
 Paddle playerPaddle = Paddle(1);
 C2D_Sprite backgroundSprite;
 
@@ -134,6 +141,7 @@ static void spawnEnemies(){
 //---------------------------------------------------------------------------------
 static void updateEnemies() {
 //---------------------------------------------------------------------------------
+	int defeatedCount = 0;
 	for (int i = 0;i<ENEMIES_COUNT;i++){
 		Enemy* currentEnemy = &enemies[i];
 		currentEnemy->timeSinceHit ++;
@@ -142,10 +150,13 @@ static void updateEnemies() {
 		currentEnemy->angle+= currentEnemy->rotationSpeed;
 		C2D_Sprite* sprite = &currentEnemy->spr;
 		C2D_SpriteSetPos(sprite,currentEnemy->x,currentEnemy->y);
-		C2D_SpriteSetRotation(&currentEnemy->spr, sin(tickCount*ROTATION_SPEED)*ROTATION_FACTOR+currentEnemy->angle);
+		C2D_SpriteSetRotation(&currentEnemy->spr, sin((float)tickCount*ROTATION_SPEED)*ROTATION_FACTOR+currentEnemy->angle);
 		float bounceFactor = (BOUNCE_SIZE/(1 + ((float)currentEnemy->timeSinceHit)*((float)BOUNCE_SPEED) )) ;
 		C2D_SpriteSetScale(&currentEnemy->spr, ENEMY_WIDTH-bounceFactor, ENEMY_HEIGHT-bounceFactor);
 		if (currentEnemy->hp<1){
+			if (currentEnemy->y<SCREEN_HEIGHT_TOP+100){
+				defeatedCount++;
+			}
 			if (!currentEnemy->hit){
 			 	currentEnemy->hit = true;
 				currentEnemy->rotationSpeed = randRange(-0.05,0.05);
@@ -156,6 +167,14 @@ static void updateEnemies() {
 			currentEnemy->sy +=0.25;
 		}
 	}
+	if (defeatedCount>2){
+		playerBall.x = 1000;
+		spawnEnemies();
+		levelNo++;
+		C2D_TextBufClear(g_staticBuf);
+		std::string str = "Level "+ std::to_string(levelNo);
+		C2D_TextParse (&g_staticText[0], g_staticBuf, str.c_str());
+	}
 }
 
 static void updatePlayer() {
@@ -164,7 +183,7 @@ static void updatePlayer() {
 	if (playerBall.x-BALL_SIZE/2 < HORIZONTAL_PADDING&&playerBall.sx<0){
 		playerBall.sx *=-1;
 	}
-	if (playerBall.x+BALL_SIZE/2 > SCREEN_WIDTH-HORIZONTAL_PADDING&&playerBall.sx>0){
+	if (playerBall.x+BALL_SIZE/2 > SCREEN_WIDTH_TOP-HORIZONTAL_PADDING&&playerBall.sx>0){
 		playerBall.sx *=-1;
 	}
 	if (playerBall.y-BALL_SIZE/2 < 20&&playerBall.sy < 0){
@@ -213,8 +232,8 @@ static void updatePlayer() {
 			playerPaddle.x = HORIZONTAL_PADDING+PADDLE_SIZE/2;
 			playerPaddle.sx *=-0.7;
 		}
-		if (playerPaddle.x+PADDLE_SIZE/2>SCREEN_WIDTH-HORIZONTAL_PADDING){
-			playerPaddle.x = SCREEN_WIDTH-(HORIZONTAL_PADDING+PADDLE_SIZE/2);
+		if (playerPaddle.x+PADDLE_SIZE/2>SCREEN_WIDTH_TOP-HORIZONTAL_PADDING){
+			playerPaddle.x = SCREEN_WIDTH_TOP-(HORIZONTAL_PADDING+PADDLE_SIZE/2);
 			playerPaddle.sx *=-0.7;
 		}
 
@@ -226,18 +245,21 @@ int main(int argc, char* argv[]) {
 //---------------------------------------------------------------------------------
 	tickCount = 0;
 	gameState = 0;
+	levelNo = 1;
 	// Init libs
 	srand(time(0));
 
 	romfsInit();
 	gfxInitDefault();
+	cfguInit(); // Allow C2D_FontLoadSystem to work
 	C3D_Init(C3D_DEFAULT_CMDBUF_SIZE);
 	C2D_Init(C2D_DEFAULT_MAX_OBJECTS);
 	C2D_Prepare();
-	consoleInit(GFX_BOTTOM, NULL);
+	//consoleInit(GFX_BOTTOM, NULL);
 
 	// Create screens
 	C3D_RenderTarget* top = C2D_CreateScreenTarget(GFX_TOP, GFX_LEFT);
+	C3D_RenderTarget* bottom = C2D_CreateScreenTarget(GFX_BOTTOM, GFX_LEFT);
 
 	// Load graphics
 	spriteSheet = C2D_SpriteSheetLoad("romfs:/gfx/sprites.t3x");
@@ -245,13 +267,18 @@ int main(int argc, char* argv[]) {
 	backgroundSheet = C2D_SpriteSheetLoad("romfs:/gfx/backgrounds.t3x");
 	if (!spriteSheet) svcBreak(USERBREAK_PANIC);
 
+	g_staticBuf  = C2D_TextBufNew(4096);
+	gameFont = C2D_FontLoad("romfs:/gfx/roboto.bcfnt");
+	C2D_TextFontParse(&g_staticText[0], gameFont, g_staticBuf, "Press A to start");
+	C2D_TextOptimize(&g_staticText[0]);
+
 	C2D_SpriteFromSheet(&bgEnemy, spriteSheet, 0);
 	C2D_SpriteSetCenter(&bgEnemy, 0.5f, 0.5f);
 	C2D_SpriteSetPos(&bgEnemy, 0, 0);
 	C2D_SpriteSetScale(&bgEnemy, 0.7, 0.7);
 	C2D_SpriteFromSheet(&titleSprite, spriteSheet, 3);
 	C2D_SpriteSetCenter(&titleSprite, 0.5f, 0.5f);
-	C2D_SpriteSetPos(&titleSprite, SCREEN_WIDTH/2, SCREEN_HEIGHT/2-50);
+	C2D_SpriteSetPos(&titleSprite, SCREEN_WIDTH_TOP/2, SCREEN_HEIGHT_TOP/2-50);
 	C2D_SpriteSetScale(&titleSprite, 1.8, 1.8);
 
 	// Initialize sprites
@@ -300,11 +327,18 @@ int main(int argc, char* argv[]) {
 				}
 			}
 			C2D_DrawSprite(&titleSprite);
+
+			C2D_TargetClear(bottom, C2D_Color32f(0.0f, 0.0f, 0.0f, 1.0f));
+			C2D_SceneBegin(bottom);
+			
+			float sintime = sin((float)tickCount/10);
+			C2D_DrawText(&g_staticText[0],C2D_WithColor|C2D_AlignCenter , (SCREEN_WIDTH_BOTTOM/2), 100, 1.0f, 1.0f, 1.0f,C2D_Color32f(sintime*0.25+0.75,sintime*0.25+0.75,sintime*0.25+0.75,1.0f));
 			C3D_FrameEnd(0);
 			if (kDown & KEY_START)
 				gameState = 1;
 		}
 		else if (gameState == 1){
+
 			updateEnemies();
 			updatePlayer();
 			if (kHeld&KEY_DLEFT||kHeld&KEY_CPAD_LEFT){
@@ -332,6 +366,12 @@ int main(int argc, char* argv[]) {
 				C2D_DrawSprite(&enemies[i].spr);
 			C2D_DrawSprite(&playerBall.spr);
 			C2D_DrawSprite(&playerPaddle.spr);
+						C2D_TargetClear(bottom, C2D_Color32f(0.0f, 0.0f, 0.0f, 1.0f));
+			C2D_SceneBegin(bottom);
+			
+			float sintime = sin((float)tickCount/10);
+			C2D_DrawText(&g_staticText[0],C2D_WithColor|C2D_AlignCenter , (SCREEN_WIDTH_BOTTOM/2), 10, 1.0f, 1.0f, 1.0f,C2D_Color32f(sintime*0.25+0.75,sintime*0.25+0.75,sintime*0.25+0.75,1.0f));
+			
 			C3D_FrameEnd(0);
 		}
 	}
