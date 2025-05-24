@@ -1,5 +1,6 @@
 --atlas -f rgba8888 -z auto
-guys/guy.png
 player/ball.png
 player/paddle.png
 title/title.png
+guys/guy.png
+guys/fireGuy.png
