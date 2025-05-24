@@ -29,6 +29,8 @@
 #define VERTICAL_PADDING 20
 #define BOUNCE_SIZE 0.2
 #define BOUNCE_SPEED 0.5
+#define ENEMY_SPAWN_TIME 5
+#define SPAWN_ANIM_TIME 100
 
 
 
@@ -43,6 +45,7 @@ C2D_Font gameFont;
 //static C2D_SpriteSheet numberSheet;
 int tickCount;
 int gameState;
+int defeatedCount;
 
 float randRange(float l,float u){
 	srand(time(0)+tickCount-sin((float)tickCount)+tan((float)tickCount));
@@ -53,6 +56,16 @@ float randRange(float l,float u){
 }
 float dist(float x, float y){
 	return (float)sqrt(x*x+y*y);
+}
+int sign(float x) {
+	return fabs(x)/x;
+  }
+int clamp(float val, float minVal, float maxVal) {
+    if (val < minVal)
+		val = minVal;
+	if (val > maxVal)
+		val = maxVal;
+	return val;
 }
 
 // Simple sprite struct
@@ -106,6 +119,7 @@ class Enemy {
 		int hp;
 		int type;
 		int timeSinceHit;
+		int spawnTime;
 		C2D_Sprite spr;
 	// Enemy(int spawnX, int spawnY, int spawnType){
 	// 	x = spawnX;
@@ -125,7 +139,10 @@ static void spawnEnemies(){
 			Enemy* currentEnemy = &enemies[x+y*ENEMIES_WIDTH];
 			currentEnemy->x = x*40+20+HORIZONTAL_PADDING;
 			currentEnemy->y = y*40+20+VERTICAL_PADDING;
+			currentEnemy->sx = 0;
+			currentEnemy->sy = 0;
 			currentEnemy->hp = 1;
+			currentEnemy->spawnTime = -x*ENEMY_SPAWN_TIME;
 			currentEnemy->hit = false;
 			currentEnemy->angle = 0;
 			currentEnemy->rotationSpeed = 0;
@@ -141,9 +158,10 @@ static void spawnEnemies(){
 //---------------------------------------------------------------------------------
 static void updateEnemies() {
 //---------------------------------------------------------------------------------
-	int defeatedCount = 0;
+	defeatedCount = 0;
 	for (int i = 0;i<ENEMIES_COUNT;i++){
 		Enemy* currentEnemy = &enemies[i];
+		currentEnemy->spawnTime ++;
 		currentEnemy->timeSinceHit ++;
 		currentEnemy->x+= currentEnemy->sx;
 		currentEnemy->y+= currentEnemy->sy;
@@ -152,9 +170,18 @@ static void updateEnemies() {
 		C2D_SpriteSetPos(sprite,currentEnemy->x,currentEnemy->y);
 		C2D_SpriteSetRotation(&currentEnemy->spr, sin((float)tickCount*ROTATION_SPEED)*ROTATION_FACTOR+currentEnemy->angle);
 		float bounceFactor = (BOUNCE_SIZE/(1 + ((float)currentEnemy->timeSinceHit)*((float)BOUNCE_SPEED) )) ;
-		C2D_SpriteSetScale(&currentEnemy->spr, ENEMY_WIDTH-bounceFactor, ENEMY_HEIGHT-bounceFactor);
+		if (currentEnemy->spawnTime>0){
+			float spawnFactor = sqrt(currentEnemy->spawnTime*0.1);
+			if (spawnFactor>1){
+				spawnFactor = 1;
+			}
+			if (spawnFactor<0){
+				spawnFactor = 0;
+			}
+			C2D_SpriteSetScale(&currentEnemy->spr, (ENEMY_WIDTH-bounceFactor)*spawnFactor, (ENEMY_HEIGHT-bounceFactor)*spawnFactor);
+		}
 		if (currentEnemy->hp<1){
-			if (currentEnemy->y<SCREEN_HEIGHT_TOP+100){
+			if (currentEnemy->y>SCREEN_HEIGHT_TOP+100){
 				defeatedCount++;
 			}
 			if (!currentEnemy->hit){
@@ -167,8 +194,7 @@ static void updateEnemies() {
 			currentEnemy->sy +=0.25;
 		}
 	}
-	if (defeatedCount>2){
-		playerBall.x = 1000;
+	if (defeatedCount==ENEMIES_COUNT){
 		spawnEnemies();
 		levelNo++;
 		C2D_TextBufClear(g_staticBuf);
@@ -354,16 +380,22 @@ int main(int argc, char* argv[]) {
 			printf("\x1b[4;1HCmdBuf:  %6.2f%%\x1b[K", C3D_GetCmdBufUsage()*100.0f);
 			printf("\x1b[5;1HSX		  %6.2f%%\x1b[K", playerBall.sx);
 			printf("\x1b[6;1HSY		  %6.2f%%\x1b[K", playerBall.sy);
-			printf("\x1b[8;1HSY		  %6.2f%%\x1b[K", randRange(-0.01,0.01));
-			
+			printf("\x1b[7;1HX		  %6.2f%%\x1b[K", playerBall.x);
+			printf("\x1b[8;1HY		  %6.2f%%\x1b[K", playerBall.y);
+			printf("\x1b[9;1HDEFEATED		  %6.2f%%\x1b[K", (double)defeatedCount);
+			//printf("\x1b[16;20HHello World!");
+
 
 			// Render the scene
 			C3D_FrameBegin(C3D_FRAME_SYNCDRAW);
 			C2D_TargetClear(top, C2D_Color32f(0.0f, 0.0f, 0.0f, 1.0f));
 			C2D_SceneBegin(top);
 			C2D_DrawSprite(&backgroundSprite);
-			for (size_t i = 0; i < ENEMIES_COUNT; i ++)
-				C2D_DrawSprite(&enemies[i].spr);
+			for (size_t i = 0; i < ENEMIES_COUNT; i ++){
+				if (enemies[i].spawnTime>0){
+					C2D_DrawSprite(&enemies[i].spr);
+				}
+			}
 			C2D_DrawSprite(&playerBall.spr);
 			C2D_DrawSprite(&playerPaddle.spr);
 						C2D_TargetClear(bottom, C2D_Color32f(0.0f, 0.0f, 0.0f, 1.0f));
@@ -387,6 +419,3 @@ int main(int argc, char* argv[]) {
 	romfsExit();
 	return 0;
 }
-int sign(float x) {
-	return fabs(x)/x;
-  }
