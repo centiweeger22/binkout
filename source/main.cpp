@@ -157,11 +157,14 @@ static void spawnEnemies(){
 			currentEnemy->timeSinceHit = 100;
 			currentEnemy->type = 0;
 			if (levelNo>1){
-				//srand(x+y+tickCount);
 				if (rand()%1000>920){
 					currentEnemy->type = 1;
 				}
-				//currentEnemy->x = (rand()%1000>950)*0.1;
+			}
+			if (levelNo>3){
+				if (rand()%1000>900){
+					currentEnemy->type = 2;
+				}
 			}
 			int spriteToUse = 3;
 			switch (currentEnemy->type){
@@ -170,6 +173,13 @@ static void spawnEnemies(){
 					break;
 				case 1:
 					spriteToUse = 4;
+					break;
+				case 2:
+					spriteToUse = 5;
+					currentEnemy->hp = 2;
+					break;
+				case 3:
+					spriteToUse = 6;
 					break;
 			}
 			C2D_SpriteFromSheet(&currentEnemy->spr, spriteSheet, spriteToUse);
@@ -214,7 +224,6 @@ static void updateEnemies() {
 				currentEnemy->rotationSpeed = randRange(-0.05,0.05);
 				currentEnemy->sx = randRange(-2,2);
 				currentEnemy->sy = randRange(-2,2);
-				currentEnemy->timeSinceHit = 0;
 				switch (currentEnemy->type){
 					case 1:
 						for (int x = 0;x<ENEMIES_COUNT;x++){
@@ -263,7 +272,7 @@ static void updatePlayer() {
 
 	//---------------------------------------------------------------------------------
 		for (int i = 0;i<ENEMIES_COUNT;i++){
-			if (!enemies[i].hit){
+			if (!enemies[i].hit&&enemies[i].spawnTime>0&&enemies[i].type!=3){
 				float x = enemies[i].x;
 				float y = enemies[i].y;
 				bool alreadyFlipped = false;
@@ -272,12 +281,14 @@ static void updatePlayer() {
 						playerBall.sy *=-1;
 						alreadyFlipped = true;
 						enemies[i].hp --;
+						enemies[i].timeSinceHit = 0;
 					}
 				}
 				if (fabs(y-playerBall.y)<20&&!alreadyFlipped){
 					if (fabs(x-(playerBall.x+playerBall.sx))<20){
 						playerBall.sx *=-1;
 						enemies[i].hp --;
+						enemies[i].	timeSinceHit = 0;
 					}
 				}
 			}
@@ -437,7 +448,11 @@ int main(int argc, char* argv[]) {
 			}
 		}
 		else if (gameState == 1){
-
+			if (kHeld&KEY_B&&kDown&KEY_A){
+				for (int i = 0;i<ENEMIES_COUNT;i++){
+					enemies[i].hp = 0;
+				}
+			}
 			if (!paused){
 				updateEnemies();
 				updatePlayer();
