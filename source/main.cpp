@@ -72,6 +72,13 @@ int clamp(float val, float minVal, float maxVal) {
 		val = maxVal;
 	return val;
 }
+void updateLevelText(){
+	C2D_TextBufClear(g_staticBuf);
+	std::string str = "Level "+ std::to_string(levelNo);
+	C2D_TextFontParse (&g_staticText[0],gameFont, g_staticBuf, str.c_str());
+	str = "Pause";
+	C2D_TextFontParse (&g_staticText[1],gameFont, g_staticBuf, str.c_str());
+}
 
 // Simple sprite struct
 typedef struct
@@ -127,6 +134,7 @@ class Enemy {
 		int type;
 		int timeSinceHit;
 		int spawnTime;
+		int transformTime;
 		C2D_Sprite spr;
 	// Enemy(int spawnX, int spawnY, int spawnType){
 	// 	x = spawnX;
@@ -156,6 +164,7 @@ static void spawnEnemies(){
 			currentEnemy->rotationSpeed = 0;
 			currentEnemy->timeSinceHit = 100;
 			currentEnemy->type = 0;
+			currentEnemy->transformTime = -1;
 			if (levelNo>1){
 				if (rand()%1000>920){
 					currentEnemy->type = 1;
@@ -164,6 +173,11 @@ static void spawnEnemies(){
 			if (levelNo>3){
 				if (rand()%1000>900){
 					currentEnemy->type = 2;
+				}
+			}
+			if (levelNo>9){
+				if (rand()%1000>900){
+					currentEnemy->type = 3;
 				}
 			}
 			int spriteToUse = 3;
@@ -233,21 +247,57 @@ static void updateEnemies() {
 							float x2 = comparedEnemy->x;
 							float y2 = comparedEnemy->y;
 							if (sqrt(pow(x1-x2,2)+pow(y1-y2,2))<EXPLOSION_DIST){
-								comparedEnemy->hp -=5;
+								if (comparedEnemy->type == 3){
+									comparedEnemy->transformTime = 60;
+								}
+								else{
+									comparedEnemy->hp -=5;
+								}
 							}
 						}
 				}
 			}
 			currentEnemy->sy +=0.25;
 		}
+		if (currentEnemy->transformTime>0){
+			currentEnemy->transformTime --;
+			switch (currentEnemy->type){
+				case 3:
+					C2D_SpriteSetRotation(&currentEnemy->spr, sin((float)tickCount*ROTATION_SPEED+i)*ROTATION_FACTOR*1/(0.01*currentEnemy->transformTime)+currentEnemy->angle);
+					break;
+			}
+		}
+			if (currentEnemy->transformTime==0){
+				switch (currentEnemy->type){
+					case 3:
+						C2D_SpriteFromSheet(&currentEnemy->spr, spriteSheet, 3);
+						C2D_SpriteSetPos(&currentEnemy->spr,currentEnemy->x,currentEnemy->y);
+						C2D_SpriteSetRotation(&currentEnemy->spr, sin((float)tickCount*ROTATION_SPEED+i)*ROTATION_FACTOR+currentEnemy->angle);
+						C2D_SpriteSetCenter(&currentEnemy->spr, 0.5f, 0.5f);
+						currentEnemy->type = 0;
+						break;
+			}
+		}
 	}
 	if (defeatedCount==ENEMIES_COUNT){
 		levelNo++;
 		spawnEnemies();
-		C2D_TextBufClear(g_staticBuf);
-		std::string str = "Level "+ std::to_string(levelNo);
-		C2D_TextFontParse (&g_staticText[0],gameFont, g_staticBuf, str.c_str());
+		updateLevelText();
 	}
+}
+
+bool hitEnemy(int index){
+	if (enemies[index].type == 3){
+		if (rand()%200>197){
+			enemies[index].transformTime = 60;
+		}
+		return false;
+	}
+	else{
+		enemies[index].hp --;
+		enemies[index].timeSinceHit = 0;
+		return true;
+	}	
 }
 
 static void updatePlayer() {
@@ -272,23 +322,24 @@ static void updatePlayer() {
 
 	//---------------------------------------------------------------------------------
 		for (int i = 0;i<ENEMIES_COUNT;i++){
-			if (!enemies[i].hit&&enemies[i].spawnTime>0&&enemies[i].type!=3){
+			if (!enemies[i].hit&&enemies[i].spawnTime>0){
 				float x = enemies[i].x;
 				float y = enemies[i].y;
 				bool alreadyFlipped = false;
 				if (fabs(x-playerBall.x)<20){
 					if (fabs(y-(playerBall.y+playerBall.sy))<20){
-						playerBall.sy *=-1;
-						alreadyFlipped = true;
-						enemies[i].hp --;
-						enemies[i].timeSinceHit = 0;
+						if (hitEnemy(i)){
+							playerBall.sy *=-1;
+							alreadyFlipped = true;
+						}
 					}
 				}
 				if (fabs(y-playerBall.y)<20&&!alreadyFlipped){
 					if (fabs(x-(playerBall.x+playerBall.sx))<20){
-						playerBall.sx *=-1;
-						enemies[i].hp --;
-						enemies[i].	timeSinceHit = 0;
+						if (hitEnemy(i)){
+							playerBall.sx *=-1;
+							alreadyFlipped = true;
+						}
 					}
 				}
 			}
@@ -442,9 +493,7 @@ int main(int argc, char* argv[]) {
 			C3D_FrameEnd(0);
 			if (kDown & KEY_A){
 				gameState = 1;
-				C2D_TextBufClear(g_staticBuf);
-				std::string str = "Level "+ std::to_string(levelNo);
-				C2D_TextFontParse (&g_staticText[0],gameFont, g_staticBuf, str.c_str());
+				updateLevelText();
 			}
 		}
 		else if (gameState == 1){
@@ -498,12 +547,19 @@ int main(int argc, char* argv[]) {
 			}
 			C2D_DrawSpriteTinted(&playerBall.spr,&playerTint);
 			C2D_DrawSprite(&playerPaddle.spr);
-						C2D_TargetClear(bottom, C2D_Color32f(0.0f, 0.0f, 0.0f, 1.0f));
+			
+			float sintime = sin((float)tickCount/10);
+			if (paused){
+				u32 pauseColor = C2D_Color32f(0,0,0,0.5);
+				C2D_DrawRectangle(0, 0, 0, SCREEN_WIDTH_TOP, SCREEN_HEIGHT_TOP, pauseColor, pauseColor, pauseColor, pauseColor);
+				C2D_DrawText(&g_staticText[1],C2D_WithColor|C2D_AlignCenter , (SCREEN_WIDTH_TOP/2), 60, 1.0f, 2.0f, 2.0f,C2D_Color32f(sintime*0.25+0.75,sintime*0.25+0.75,sintime*0.25+0.75,1.0f));
+			}
+			
+			C2D_TargetClear(bottom, C2D_Color32f(0.0f, 0.0f, 0.0f, 1.0f));
 			C2D_SceneBegin(bottom);
 			u32 topColor = C2D_Color32f((130.0/255.0)*0.4,(102.0/255.0)*0.4,(152.0/255.0)*0.4,1.0);
 			u32 bottomColor = C2D_Color32f((130.0/255.0)*0.2,(102.0/255.0)*0.2,(152.0/255.0)*0.2,1.0);
 			C2D_DrawRectangle(0, 0, 0, SCREEN_WIDTH_BOTTOM, SCREEN_WIDTH_BOTTOM, topColor, topColor, bottomColor, bottomColor);
-			float sintime = sin((float)tickCount/10);
 			C2D_DrawText(&g_staticText[0],C2D_WithColor|C2D_AlignCenter , (SCREEN_WIDTH_BOTTOM/2), 10, 1.0f, 1.0f, 1.0f,C2D_Color32f(sintime*0.25+0.75,sintime*0.25+0.75,sintime*0.25+0.75,1.0f));
 			C2D_SpriteSetRotation(&lifeSprite, sin(float(tickCount)/10)*0.6);
 			for (int i = 0;i<playerBall.lives;i++){
