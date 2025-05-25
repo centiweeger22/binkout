@@ -3,3 +3,6 @@ binkout.elf
 binkout.smdh
 .vscode/c_cpp_properties.json
 build/*
+romfs/*
+romfs/gfx/*
+romfs/gfx/sprites.t3x
