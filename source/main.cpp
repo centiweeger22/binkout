@@ -7,6 +7,7 @@
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <time.h>
 #include <3ds.h>
 #include <random>
@@ -33,6 +34,89 @@
 #define SPAWN_ANIM_TIME 100
 #define EXPLOSION_DIST 70	
 
+#define SAMPLERATE 22050 //all this audio gartrash
+#define SAMPLESPERBUF (SAMPLERATE / 30)
+#define BYTESPERSAMPLE 4
+#define MAX_SOUNDS 5
+
+class AudioStream {
+public:
+    FILE* file;
+    size_t dataStart;
+    u32* buffer;
+    ndspWaveBuf waveBuf[2];
+    bool fillBlock;
+};
+
+AudioStream sounds[MAX_SOUNDS];
+int loopPoint = 0;
+FILE* musicFile = NULL;  // music files
+size_t musicDataStart = 0;
+
+int loopPoint2 = 0;
+FILE* musicFile2 = NULL;  // music files
+size_t musicDataStart2 = 0;
+
+
+void WavBufferFill(void *buffer, size_t size, FILE* file) {
+	if (!file) return;
+	size_t bytesRead = fread(buffer, 1, size, file);
+	int loopPoint = 0;
+	if (bytesRead < size) {
+		// Loop back!
+		fseek(file, loopPoint, SEEK_SET);
+		fread((u8*)buffer + bytesRead, 1, size - bytesRead, file);
+	}
+	DSP_FlushDataCache(buffer, size);
+}
+
+int parse_wav_header(FILE *f, size_t *dataStart) {
+	char chunkId[5] = {0}, format[5] = {0};
+	u32 chunkSize;
+
+	fread(chunkId, 1, 4, f);
+	fread(&chunkSize, 4, 1, f);
+	fread(format, 1, 4, f);
+
+	if (strncmp(chunkId, "RIFF", 4) != 0 || strncmp(format, "WAVE", 4) != 0)
+		return -1;
+
+	while (!feof(f)) {
+		char subChunkId[5] = {0};
+		u32 subChunkSize = 0;
+
+		fread(subChunkId, 1, 4, f);
+		fread(&subChunkSize, 4, 1, f);
+
+		if (strncmp(subChunkId, "data", 4) == 0) {
+			*dataStart = ftell(f);
+			return 0;
+		} else {
+			fseek(f, subChunkSize, SEEK_CUR);
+		}
+	}
+	return -1;
+}
+
+bool loadWav(AudioStream* stream, const char* path, int channel) {
+	stream->file = fopen(path, "rb");
+	if (!stream->file || parse_wav_header(stream->file, &stream->dataStart) < 0) return false;
+
+	fseek(stream->file, stream->dataStart, SEEK_SET);
+	stream->buffer = (u32*)linearAlloc(SAMPLESPERBUF * BYTESPERSAMPLE * 2);
+	memset(stream->waveBuf, 0, sizeof(stream->waveBuf));
+	stream->waveBuf[0].data_vaddr = &stream->buffer[0];
+	stream->waveBuf[1].data_vaddr = &stream->buffer[SAMPLESPERBUF];
+	stream->waveBuf[0].nsamples = SAMPLESPERBUF;
+	stream->waveBuf[1].nsamples = SAMPLESPERBUF;
+	stream->fillBlock = false;
+
+	WavBufferFill(stream->buffer, SAMPLESPERBUF * BYTESPERSAMPLE * 2,stream->file);
+	ndspChnWaveBufAdd(channel, &stream->waveBuf[0]);
+	ndspChnWaveBufAdd(channel, &stream->waveBuf[1]);
+
+	return true;
+}
 
 static C2D_SpriteSheet spriteSheet;
 static C2D_SpriteSheet backgroundSheet;
@@ -50,6 +134,7 @@ int defeatedCount;
 bool endless;
 int randCount = 0;
 bool paused;
+int loseTime;
 
 float randRange(float l,float u){
 	//srand(time(0)+tickCount-sin((float)tickCount-4*(randCount))+tan((float)tickCount+4*(randCount))+randCount);
@@ -363,7 +448,7 @@ static void updatePlayer() {
 			playerPaddle.x = SCREEN_WIDTH_TOP-(HORIZONTAL_PADDING+PADDLE_SIZE/2);
 			playerPaddle.sx *=-0.7;
 		}
-		if (playerBall.y>SCREEN_HEIGHT_TOP+20){
+		if ((playerBall.y>SCREEN_HEIGHT_TOP+20)&&(playerBall.lives>0)){
 			C2D_SpriteSetPos(&playerBall.spr, playerPaddle.x, playerPaddle.y-20);
 		}
 		if (playerBall.y>SCREEN_HEIGHT_TOP+200){
@@ -372,17 +457,57 @@ static void updatePlayer() {
 			playerBall.sx = 0;
 			playerBall.sy = 3;
 			playerBall.lives --;
+			if (playerBall.lives<0){
+				loseTime = tickCount*0.2+20;
+			}
 		}
 
 
 	}
 
+	void InitGame(){
+		tickCount = 0;
+		gameState = 0;
+		levelNo = 1;
+
+		C2D_SpriteFromSheet(&bgEnemy, spriteSheet, 3);
+		C2D_SpriteSetCenter(&bgEnemy, 0.5f, 0.5f);
+		C2D_SpriteSetPos(&bgEnemy, 0, 0);
+		C2D_SpriteSetScale(&bgEnemy, 0.7, 0.7);
+		C2D_SpriteFromSheet(&titleSprite, spriteSheet, 2);
+		C2D_SpriteSetCenter(&titleSprite, 0.5f, 0.5f);
+		C2D_SpriteSetPos(&titleSprite, SCREEN_WIDTH_TOP/2, SCREEN_HEIGHT_TOP/2-50);
+		C2D_SpriteSetScale(&titleSprite, 1.8, 1.8);
+
+		// Initialize sprites
+		spawnEnemies();
+
+		C2D_SpriteFromSheet(&backgroundSprite,backgroundSheet,0);
+		C2D_SpriteFromSheet(&lifeSprite,spriteSheet,0);
+		C2D_SpriteSetCenter(&lifeSprite, 0.5f, 0.5f);
+		C2D_SpriteSetPos(&lifeSprite, SCREEN_WIDTH_TOP/2,SCREEN_HEIGHT_TOP/2);
+		C2D_SpriteSetScale(&lifeSprite, 0.5f, 0.5f);
+
+		//create player ball
+		C2D_SpriteFromSheet(&playerBall.spr, spriteSheet, 0);
+		C2D_SpriteSetCenter(&playerBall.spr, 0.5f, 0.5f);
+		C2D_SpriteSetPos(&playerBall.spr, playerBall.x, playerBall.y);
+		C2D_SpriteSetScale(&playerBall.spr, (BALL_SIZE/64.0), (BALL_SIZE/64.0));
+		//C2D_SpriteSetScale(&playerBall.spr, 1, 1);
+
+		//create player paddle
+		C2D_SpriteFromSheet(&playerPaddle.spr, spriteSheet, 1);
+		C2D_SpriteSetCenter(&playerPaddle.spr, 0.5f, 0.5f);
+		C2D_SpriteSetPos(&playerPaddle.spr, playerPaddle.x, playerPaddle.y);
+		C2D_SpriteSetScale(&playerPaddle.spr, (PADDLE_SIZE/128.0),(PADDLE_SIZE/128.0));
+	}
+
+
+
 //---------------------------------------------------------------------------------
 int main(int argc, char* argv[]) {
 //---------------------------------------------------------------------------------
-	tickCount = 0;
-	gameState = 0;
-	levelNo = 1;
+
 	// Init libs
 	srand(time(0));
 
@@ -392,6 +517,9 @@ int main(int argc, char* argv[]) {
 	C3D_Init(C3D_DEFAULT_CMDBUF_SIZE);
 	C2D_Init(C2D_DEFAULT_MAX_OBJECTS);
 	C2D_Prepare();
+	ndspWaveBuf waveBuf[2];
+	ndspWaveBuf waveBuf2[2];
+
 	//consoleInit(GFX_BOTTOM, NULL);
 
 	// Create screens
@@ -408,42 +536,75 @@ int main(int argc, char* argv[]) {
 	gameFont = C2D_FontLoad("romfs:/gfx/roboto.bcfnt");
 	C2D_TextFontParse(&g_staticText[0], gameFont, g_staticBuf, "Press A to start");
 	C2D_TextOptimize(&g_staticText[0]);
+	C2D_TextFontParse(&g_staticText[2], gameFont, g_staticBuf, "YOU LOSE");
+	C2D_TextOptimize(&g_staticText[2]);
 
-	C2D_SpriteFromSheet(&bgEnemy, spriteSheet, 3);
-	C2D_SpriteSetCenter(&bgEnemy, 0.5f, 0.5f);
-	C2D_SpriteSetPos(&bgEnemy, 0, 0);
-	C2D_SpriteSetScale(&bgEnemy, 0.7, 0.7);
-	C2D_SpriteFromSheet(&titleSprite, spriteSheet, 2);
-	C2D_SpriteSetCenter(&titleSprite, 0.5f, 0.5f);
-	C2D_SpriteSetPos(&titleSprite, SCREEN_WIDTH_TOP/2, SCREEN_HEIGHT_TOP/2-50);
-	C2D_SpriteSetScale(&titleSprite, 1.8, 1.8);
+	//load audio
 
-	// Initialize sprites
-	spawnEnemies();
+	loadWav(&sounds[0], "romfs:/audio/hit1.wav", 0);
+	loadWav(&sounds[1], "romfs:/audio/hit2.wav", 1);
+	loadWav(&sounds[2], "romfs:/audio/hit3.wav", 2);
+	musicFile = fopen("romfs:/audio/bgm.wav", "rb");
+	if (!musicFile || parse_wav_header(musicFile, &musicDataStart) < 0)
+	{
+		printf("Failed to open or parse WAV file.\n");
+		gfxExit();
+		romfsExit();
+		return 1;
+	}
+	fseek(musicFile, musicDataStart, SEEK_SET);
+	musicFile2 = fopen("romfs:/audio/bgm2.wav", "rb");
+	if (!musicFile2 || parse_wav_header(musicFile2, &musicDataStart2) < 0)
+	{
+		printf("Failed to open or parse WAV file.\n");
+		gfxExit();
+		romfsExit();
+		return 1;
+	}
+	fseek(musicFile2, musicDataStart2, SEEK_SET);
 
-	C2D_SpriteFromSheet(&backgroundSprite,backgroundSheet,0);
-	C2D_SpriteFromSheet(&lifeSprite,spriteSheet,0);
-	C2D_SpriteSetCenter(&lifeSprite, 0.5f, 0.5f);
-	C2D_SpriteSetPos(&lifeSprite, SCREEN_WIDTH_TOP/2,SCREEN_HEIGHT_TOP/2);
-	C2D_SpriteSetScale(&lifeSprite, 0.5f, 0.5f);
 
-	//create player ball
-	C2D_SpriteFromSheet(&playerBall.spr, spriteSheet, 0);
-	C2D_SpriteSetCenter(&playerBall.spr, 0.5f, 0.5f);
-	C2D_SpriteSetPos(&playerBall.spr, playerBall.x, playerBall.y);
-	C2D_SpriteSetScale(&playerBall.spr, (BALL_SIZE/64.0), (BALL_SIZE/64.0));
-	//C2D_SpriteSetScale(&playerBall.spr, 1, 1);
+	u32* audioBuffer = (u32*)linearAlloc(SAMPLESPERBUF * BYTESPERSAMPLE * 2); //buffers
+	memset(waveBuf, 0, sizeof(waveBuf));
+	waveBuf[0].data_vaddr = &audioBuffer[0];
+	waveBuf[1].data_vaddr = &audioBuffer[SAMPLESPERBUF];
+	waveBuf[0].nsamples = SAMPLESPERBUF;
+	waveBuf[1].nsamples = SAMPLESPERBUF;
+	u32* audioBuffer2 = (u32*)linearAlloc(SAMPLESPERBUF * BYTESPERSAMPLE * 2); //buffers
+	memset(waveBuf2, 0, sizeof(waveBuf2));
+	waveBuf2[0].data_vaddr = &audioBuffer2[0];
+	waveBuf2[1].data_vaddr = &audioBuffer2[SAMPLESPERBUF];
+	waveBuf2[0].nsamples = SAMPLESPERBUF;
+	waveBuf2[1].nsamples = SAMPLESPERBUF;
 
-	//create player paddle
-	C2D_SpriteFromSheet(&playerPaddle.spr, spriteSheet, 1);
-	C2D_SpriteSetCenter(&playerPaddle.spr, 0.5f, 0.5f);
-	C2D_SpriteSetPos(&playerPaddle.spr, playerPaddle.x, playerPaddle.y);
-	C2D_SpriteSetScale(&playerPaddle.spr, (PADDLE_SIZE/128.0),(PADDLE_SIZE/128.0));
+	// int numSounds = 3; // or however many you want
+	ndspInit();
+	// for (int i = 0; i < numSounds; i++) {
+    // ndspChnReset(i);
+    // ndspChnSetInterp(i, NDSP_INTERP_LINEAR);
+    // ndspChnSetRate(i, 22050); // Or whatever
+    // ndspChnSetFormat(i, NDSP_FORMAT_STEREO_PCM16);
+    // float mix[12] = {1.0f, 1.0f}; // Left/Right
+    // ndspChnSetMix(i, mix);
+	// }
+
+	WavBufferFill(audioBuffer, SAMPLESPERBUF * BYTESPERSAMPLE * 2,musicFile);//fill i up the buffer
+	ndspChnWaveBufAdd(0, &waveBuf[0]);
+	ndspChnWaveBufAdd(0, &waveBuf[1]);
+	WavBufferFill(audioBuffer2, SAMPLESPERBUF * BYTESPERSAMPLE * 2,musicFile2);//fill i up the buffer
+	ndspChnWaveBufAdd(1, &waveBuf2[0]);
+	ndspChnWaveBufAdd(1, &waveBuf2[1]);
+
+	bool fillBlock = false;
+	bool fillBlock2 = false;
+
+	InitGame();
 
 
 	// Main loop
 	while (aptMainLoop())
 	{
+		ndspChnSetRate(0, SAMPLERATE);
 		tickCount ++;
 
 		hidScanInput();
@@ -453,6 +614,27 @@ int main(int argc, char* argv[]) {
 		u32 kHeld = hidKeysHeld();
 		if (kDown & KEY_START && kHeld & KEY_SELECT)
 		 	break; // break in order to return to hbmenu
+
+		if (waveBuf[fillBlock].status == NDSP_WBUF_DONE) {
+			WavBufferFill(waveBuf[fillBlock].data_pcm16,
+								waveBuf[fillBlock].nsamples * BYTESPERSAMPLE,musicFile);
+			ndspChnWaveBufAdd(0, &waveBuf[fillBlock]);
+			fillBlock = !fillBlock;
+		}
+		if (waveBuf2[fillBlock2].status == NDSP_WBUF_DONE) {
+			WavBufferFill(waveBuf2[fillBlock2].data_pcm16,
+								waveBuf2[fillBlock2].nsamples * BYTESPERSAMPLE,musicFile2);
+			ndspChnWaveBufAdd(1, &waveBuf2[fillBlock2]);
+			fillBlock2 = !fillBlock2;
+		}
+		// for (int i = 0; i < numSounds; i++) {
+		// 	if (sounds[i].waveBuf[sounds[i].fillBlock].status == NDSP_WBUF_DONE) {
+		// 		WavBufferFill(sounds[i].waveBuf[sounds[i].fillBlock].data_pcm16,
+		// 							SAMPLESPERBUF * BYTESPERSAMPLE,sounds[i].file);
+		// 		ndspChnWaveBufAdd(i, &sounds[i].waveBuf[sounds[i].fillBlock]);
+		// 		sounds[i].fillBlock = !sounds[i].fillBlock;
+		// 	}
+		// }
 
 		if (gameState == 0){
 			C3D_FrameBegin(C3D_FRAME_SYNCDRAW);
@@ -485,11 +667,15 @@ int main(int argc, char* argv[]) {
 			u32 bottomColor = C2D_Color32f((130.0/255.0)*0.2*fadeTime,(102.0/255.0)*0.2*fadeTime,(152.0/255.0)*0.2*fadeTime,1.0);
 			C2D_DrawRectangle(0, 0, 0, SCREEN_WIDTH_BOTTOM, SCREEN_WIDTH_BOTTOM, topColor, topColor, bottomColor, bottomColor);
 			
-			float sintime = sin((float)tickCount/10);
-			sintime = 1;
+			//float sintime = sin((float)tickCount/10);
+			//sintime = 1;
 			fadeTime = ((float)tickCount/1000-0.4);
+			float tickCountMask = tickCount*0.2-100;
+			if (tickCountMask > 0){
+				tickCountMask = 0;
+			}
 			if (fadeTime>1){fadeTime = 1;}
-			C2D_DrawText(&g_staticText[0],C2D_WithColor|C2D_AlignCenter , (SCREEN_WIDTH_BOTTOM/2), 100, 1.0f, 1.0f, 1.0f,C2D_Color32f(1*(sintime*0.25+0.75),1*(sintime*0.25+0.75),1*(sintime*0.25+0.75),fadeTime));
+			C2D_DrawText(&g_staticText[0],C2D_WithColor|C2D_AlignCenter , (SCREEN_WIDTH_BOTTOM/2), tickCountMask*tickCountMask+100, 1.0f, 1.0f, 1.0f,C2D_Color32f(1,1,1,1));
 			C3D_FrameEnd(0);
 			if (kDown & KEY_A){
 				gameState = 1;
@@ -545,14 +731,34 @@ int main(int argc, char* argv[]) {
 			}else{
 				C2D_PlainImageTint(&playerTint,C2D_Color32f(0.0,0.0,0.0,1.0),0.0);
 			}
-			C2D_DrawSpriteTinted(&playerBall.spr,&playerTint);
+			if ((playerBall.lives>=0)){
+				C2D_DrawSpriteTinted(&playerBall.spr,&playerTint);
+			}
 			C2D_DrawSprite(&playerPaddle.spr);
 			
 			float sintime = sin((float)tickCount/10);
-			if (paused){
+			if (paused&!(playerBall.lives<0)){
 				u32 pauseColor = C2D_Color32f(0,0,0,0.5);
 				C2D_DrawRectangle(0, 0, 0, SCREEN_WIDTH_TOP, SCREEN_HEIGHT_TOP, pauseColor, pauseColor, pauseColor, pauseColor);
 				C2D_DrawText(&g_staticText[1],C2D_WithColor|C2D_AlignCenter , (SCREEN_WIDTH_TOP/2), 60, 1.0f, 2.0f, 2.0f,C2D_Color32f(sintime*0.25+0.75,sintime*0.25+0.75,sintime*0.25+0.75,1.0f));
+			}
+
+			float tickCountMask = tickCount*0.2-loseTime;
+			if (tickCountMask > 0){
+				tickCountMask = 0;
+			}
+			if (playerBall.lives<0){
+				updateEnemies();
+				paused = true;
+				C2D_DrawText(&g_staticText[2],C2D_WithColor|C2D_AlignCenter , (SCREEN_WIDTH_TOP/2), 80-tickCountMask*tickCountMask, 1.0f, 2.0f, 2.0f,C2D_Color32f(1,1,1,1));
+				if (kDown & KEY_START || kDown & KEY_A){
+					paused = false;
+					InitGame();
+					playerBall = Ball(SCREEN_WIDTH_TOP/2,SCREEN_HEIGHT_TOP-10,0,3);
+					playerPaddle = Paddle(1);
+					gameState = 1;
+					updateLevelText();
+				}
 			}
 			
 			C2D_TargetClear(bottom, C2D_Color32f(0.0f, 0.0f, 0.0f, 1.0f));
@@ -560,6 +766,7 @@ int main(int argc, char* argv[]) {
 			u32 topColor = C2D_Color32f((130.0/255.0)*0.4,(102.0/255.0)*0.4,(152.0/255.0)*0.4,1.0);
 			u32 bottomColor = C2D_Color32f((130.0/255.0)*0.2,(102.0/255.0)*0.2,(152.0/255.0)*0.2,1.0);
 			C2D_DrawRectangle(0, 0, 0, SCREEN_WIDTH_BOTTOM, SCREEN_WIDTH_BOTTOM, topColor, topColor, bottomColor, bottomColor);
+
 			C2D_DrawText(&g_staticText[0],C2D_WithColor|C2D_AlignCenter , (SCREEN_WIDTH_BOTTOM/2), 10, 1.0f, 1.0f, 1.0f,C2D_Color32f(sintime*0.25+0.75,sintime*0.25+0.75,sintime*0.25+0.75,1.0f));
 			C2D_SpriteSetRotation(&lifeSprite, sin(float(tickCount)/10)*0.6);
 			for (int i = 0;i<playerBall.lives;i++){
@@ -580,5 +787,11 @@ int main(int argc, char* argv[]) {
 	C3D_Fini();
 	gfxExit();
 	romfsExit();
+	ndspExit();
+	// for (int i = 0; i < numSounds; i++) {
+	// 	if (sounds[i].file) fclose(sounds[i].file);
+	// 	if (sounds[i].buffer) linearFree(sounds[i].buffer);
+	// }
+	if (musicFile) fclose(musicFile);
 	return 0;
 }
